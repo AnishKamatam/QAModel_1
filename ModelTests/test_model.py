@@ -10,30 +10,29 @@ from DataOps.cleandata import (
     ID_COL, TEXT_COLS, NUTRIENT_COLS, TAG_COLS, FLAG_COLS, COLS_TO_KEEP
 )
 
-# Text columns to embed
 TEXT_COLS_EMBED = ["category_name", "product_name", "ingredients_text"]
 
 
 def process_and_embed(df):
-    # Cleans and embeds the raw CSV data to match the training feature set
+    # Cleans and embeds raw CSV data to match training feature set
     
     # Keep only columns used in training
     keep = [c for c in COLS_TO_KEEP if c in df.columns and c != "label_is_anomaly"]
     df = df[keep].copy()
     
-    # Convert ID + text to string
+    # Convert ID and text columns to string
     for col in ID_COL + TEXT_COLS:
         if col in df.columns:
             df[col] = df[col].astype("string")
     
-    # Nutrient columns → clean float (remove carets, fill missing with -1)
+    # Convert nutrient columns to numeric (remove carets, fill missing with -1)
     for col in NUTRIENT_COLS:
         if col in df.columns:
             numeric_val = df[col].astype(str).str.rstrip("^").str.strip()
             df[col] = pd.to_numeric(numeric_val, errors="coerce")
             df[col] = df[col].fillna(-1)
     
-    # Tags + flags → bool
+    # Convert tag and flag columns to boolean
     bool_cols = TAG_COLS + FLAG_COLS
     for col in bool_cols:
         if col in df.columns:
@@ -46,7 +45,7 @@ def process_and_embed(df):
                 .astype(bool)
             )
     
-    # Drop rows without GTIN and empty ingredients
+    # Remove rows without GTIN or empty ingredients
     df = df.dropna(subset=["gtin"])
     if "ingredients_text" in df.columns:
         df = df[df["ingredients_text"].notna() & (df["ingredients_text"].astype(str).str.strip() != "")]
@@ -64,10 +63,10 @@ def process_and_embed(df):
             embedding_df = pd.DataFrame(embeddings, columns=embedding_cols, index=df.index)
             df = pd.concat([df, embedding_df], axis=1)
     
-    # Drop original text columns to leave only embeddings + numeric features
+    # Drop original text columns (keep only embeddings)
     df = df.drop(columns=TEXT_COLS_EMBED, errors="ignore")
     
-    # Separate GTIN for reference, return Feature Matrix X
+    # Separate GTIN for reference, return feature matrix
     gtin_column = df["gtin"].copy() if "gtin" in df.columns else None
     X = df.drop(columns=["gtin"], errors="ignore")
     
@@ -75,18 +74,16 @@ def process_and_embed(df):
 
 
 def test_model_on_dataset(csv_path, expected_result, dataset_name, threshold=0.3):
-    # Runs the model on a dataset using a CUSTOM probability threshold
+    # Tests model on a dataset using custom probability threshold
     
-    print(f"\n{'=' * 70}")
-    print(f"Testing on: {dataset_name}")
+    print(f"\nTesting on: {dataset_name}")
     print(f"Expected: {expected_result} | Using Threshold: {threshold}")
-    print(f"{'=' * 70}")
     
     if not csv_path.exists():
         print(f"Error: File not found at {csv_path}")
         return 0, None, None
     
-    # Load and process
+    # Load and process data
     print(f"Loading {csv_path}...")
     df = pd.read_csv(csv_path)
     print(f"Loaded {len(df):,} rows")
@@ -111,10 +108,10 @@ def test_model_on_dataset(csv_path, expected_result, dataset_name, threshold=0.3
     print("Generating predictions...")
     probs = model.predict_proba(X)[:, 1]
     
-    # Apply the custom threshold instead of using model.predict()
-    # This increases the 'catch rate' (Recall)
+    # Apply custom threshold (instead of default 0.5)
     preds = (probs >= threshold).astype(int)
     
+    # Calculate metrics
     total_rows = len(preds)
     anomalies_detected = sum(preds)
     anomaly_percentage = (anomalies_detected / total_rows * 100) if total_rows > 0 else 0
@@ -138,27 +135,26 @@ def test_model_on_dataset(csv_path, expected_result, dataset_name, threshold=0.3
 
 
 def main():
+    # Main function to test model on both validation datasets
     data_folder = Path(__file__).parent / "Data"
     
-    # Target Threshold: 0.3 balances high recall with low false positives
+    # Target threshold balances high recall with low false positives
     TARGET_THRESHOLD = 0.35 
     
-    # Test on errors (Measures RECALL/Catch Rate)
+    # Test on errors dataset (measures recall/catch rate)
     errors_file = data_folder / "AI Training Data - items data errors.csv"
     catch_rate, _, _ = test_model_on_dataset(errors_file, "100% anomalies", "Items Data Errors", threshold=TARGET_THRESHOLD)
     
-    # Test on approved (Measures FALSE POSITIVE Rate)
+    # Test on approved dataset (measures false positive rate)
     approved_file = data_folder / "AI Training Data - approved profiles.csv"
     fp_rate, _, _ = test_model_on_dataset(approved_file, "0% anomalies", "Approved Profiles", threshold=TARGET_THRESHOLD)
     
-    print(f"\n{'=' * 70}")
-    print("FINAL PERFORMANCE SUMMARY")
-    print(f"{'=' * 70}")
+    print(f"\nFINAL PERFORMANCE SUMMARY")
     print(f"Overall Catch Rate (Recall): {catch_rate:.2f}%")
     print(f"Overall False Positive Rate: {fp_rate:.2f}%")
     
     if fp_rate <= 10.0:
-        print("SUCCESS: Your threshold of 0.3 met the <10% False Positive requirement!")
+        print("SUCCESS: Threshold met the <10% False Positive requirement!")
     else:
         print("ALERT: False Positive rate exceeds 10%. Consider raising threshold to 0.35 or 0.4.")
 

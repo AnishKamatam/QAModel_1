@@ -1,20 +1,17 @@
 import pandas as pd
 
 
-# ID column
+# Column definitions
 ID_COL = ["gtin"]
 
-# Text columns
 TEXT_COLS = ["category_name", "product_name", "ingredients_text"]
 
-# Nutrient columns (numeric)
 NUTRIENT_COLS = [
     "calories", "total_fat", "sat_fat", "trans_fat", "unsat_fat",
     "cholesterol", "sodium", "carbs", "dietary_fiber",
     "total_sugars", "added_sugars", "protein", "potassium",
 ]
 
-# Tag columns (boolean)
 TAG_COLS = [
     "is_whole_grain", "is_omega_three", "is_healthy_oils", "is_healthy_fats",
     "is_seed_oil", "is_refined_grains", "is_deep_fried", "is_sugars_added",
@@ -29,7 +26,6 @@ TAG_COLS = [
     "is_starch", "is_active_live_cultures",
 ]
 
-# Existing rule-based flags (boolean)
 FLAG_COLS = [
     "flag_calorie_mismatch",
     "flag_fat_mismatch",
@@ -43,50 +39,44 @@ FLAG_COLS = [
     "flag_type_error",
 ]
 
-# All columns to keep in the cleaned dataset
 COLS_TO_KEEP = ID_COL + TEXT_COLS + NUTRIENT_COLS + TAG_COLS + FLAG_COLS + ["label_is_anomaly"]
 
 
 def clean(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
-
+    # Cleans and preprocesses dataframe for model training
     initial_count = len(df)
     
-    # 1. Subset to final columns
+
+    # Keep only target columns
     keep = [c for c in COLS_TO_KEEP if c in df.columns]
     df = df[keep].copy()
-    
 
-    # 2. Convert ID + text to string
+
+    # Convert ID and text columns to string
     for col in ID_COL + TEXT_COLS:
         if col in df.columns:
             df[col] = df[col].astype("string")
-    
 
-    # 2.5. Create label_is_anomaly based on carets in all columns that can have carets
-    # Check for carets BEFORE processing/cleaning the columns
+
+    # Create label_is_anomaly from carets in original data (before cleaning)
     df["label_is_anomaly"] = 0
     cols_with_carets = TEXT_COLS + NUTRIENT_COLS + TAG_COLS
     for col in cols_with_carets:
         if col in df.columns:
-            # Convert to string, handle NaN properly, then check for caret
             col_str = df[col].astype(str).str.strip()
-            # Check for caret (handle NaN as empty string which won't end with "^")
             has_caret = col_str.fillna("").str.endswith("^")
             df["label_is_anomaly"] = df["label_is_anomaly"] | has_caret.astype(int)
-    
 
-    # 3. Nutrient columns → clean float (remove carets, keep pure numbers for model)
+
+    # Convert nutrient columns to numeric (remove carets, fill NaN with -1)
     for col in NUTRIENT_COLS:
         if col in df.columns:
-            # Strip caret, convert to numeric (validates and cleans the number)
             numeric_val = df[col].astype(str).str.rstrip("^").str.strip()
             df[col] = pd.to_numeric(numeric_val, errors="coerce")
-            # Fill NaN with -1 as sentinel value for missing/wrong data
             df[col] = df[col].fillna(-1)
-            # We do NOT modify negatives — keep them as anomalies
-    
 
-    # 4. Tags + flags → bool
+
+    # Convert tag and flag columns to boolean
     bool_cols = TAG_COLS + FLAG_COLS
     for col in bool_cols:
         if col in df.columns:
@@ -98,38 +88,35 @@ def clean(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
                 .fillna(False)
                 .astype(bool)
             )
-    
 
-    # 5. Drop rows without GTIN (can't merge these)
+
+    # Remove rows without GTIN
     before_gtin = len(df)
     df = df.dropna(subset=["gtin"])
     removed_no_gtin = before_gtin - len(df)
-    
 
-    # 6. Remove rows with empty ingredients_text (null, empty string, or whitespace only)
+
+    # Remove rows with empty ingredients_text
     removed_empty_ingredients = 0
-
-
     if "ingredients_text" in df.columns:
         before_ingredients = len(df)
-        # Remove rows where ingredients_text is null, empty string, or whitespace only
         df = df[
             df["ingredients_text"].notna() & 
             (df["ingredients_text"].astype(str).str.strip() != "")
         ]
         removed_empty_ingredients = before_ingredients - len(df)
-    
 
-    # 7. Remove duplicate GTINs
+
+    # Remove duplicate GTINs (keep first occurrence)
     before_duplicates = len(df)
     df = df.sort_values("gtin")
     df = df.drop_duplicates(subset=["gtin"], keep="first")
     removed_duplicates = before_duplicates - len(df)
-    
-    # 8. Return the cleaned dataframe
+
+
     final_count = len(df)
     total_removed = initial_count - final_count
-    
+
 
     if verbose:
         print(f"  Initial rows: {initial_count:,}")
@@ -138,5 +125,5 @@ def clean(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
         print(f"  Removed (duplicate GTINs): {removed_duplicates:,}")
         print(f"  Final rows: {final_count:,}")
         print(f"  Total removed: {total_removed:,}")
-    
+
     return df

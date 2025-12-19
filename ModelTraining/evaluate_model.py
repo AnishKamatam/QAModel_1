@@ -1,14 +1,13 @@
 import pandas as pd
 import xgboost as xgb
-import json
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_recall_curve, confusion_matrix
+from sklearn.metrics import precision_recall_curve
 from pathlib import Path
 
 
 def plot_and_measure_recall_at_k(y_test, probs, k_values=[500, 1000, 2000]):
-    # Plot Precision-Recall curve
+    # Plots Precision-Recall curve and calculates Recall@K metrics
     precision, recall, thresholds = precision_recall_curve(y_test, probs)
     plt.plot(recall, precision, label='XGBoost Anomaly Model')
     plt.xlabel('Recall (How many errors we caught)')
@@ -18,12 +17,12 @@ def plot_and_measure_recall_at_k(y_test, probs, k_values=[500, 1000, 2000]):
     plt.legend()
     plt.show()
 
-    # Calculate Recall@K - shows how many errors we catch when checking top K flagged items
+    # Calculate Recall@K - shows how many errors caught when checking top K flagged items
     results = pd.DataFrame({'true_label': y_test, 'prob': probs}).sort_values(by='prob', ascending=False)
     
     total_anomalies = sum(y_test)
     print(f"\nTotal anomalies in test set: {total_anomalies}")
-    print("\n--- Recall@K Analysis ---")
+    print("\nRecall@K Analysis:")
     
     for k in k_values:
         top_k = results.head(k)
@@ -35,50 +34,32 @@ def plot_and_measure_recall_at_k(y_test, probs, k_values=[500, 1000, 2000]):
 
 
 def check_nutrient_segments(X_test, y_test, preds):
-    print("\n--- Precision by Nutrient Segments ---")
+    # Checks precision for different nutrient flag segments
+    print("\nPrecision by Nutrient Segments:")
     results = X_test.copy()
     results['true_label'] = y_test
     results['prediction'] = preds
     
-    # Check precision for different nutrient flag segments
-    if 'flag_calorie_mismatch' in results.columns:
-        calorie_errors = results[results['flag_calorie_mismatch'] == True]
-        if len(calorie_errors) > 0:
-            precision = calorie_errors['true_label'].mean()
-            print(f"Precision for Calorie Mismatches: {precision:.1%} ({len(calorie_errors)} flagged)")
+    flag_columns = ['flag_calorie_mismatch', 'flag_fat_mismatch', 'flag_carb_mismatch', 
+                    'flag_sugar_mismatch', 'flag_negative_values']
     
-    if 'flag_fat_mismatch' in results.columns:
-        fat_errors = results[results['flag_fat_mismatch'] == True]
-        if len(fat_errors) > 0:
-            precision = fat_errors['true_label'].mean()
-            print(f"Precision for Fat Mismatches: {precision:.1%} ({len(fat_errors)} flagged)")
-    
-    if 'flag_carb_mismatch' in results.columns:
-        carb_errors = results[results['flag_carb_mismatch'] == True]
-        if len(carb_errors) > 0:
-            precision = carb_errors['true_label'].mean()
-            print(f"Precision for Carb Mismatches: {precision:.1%} ({len(carb_errors)} flagged)")
-    
-    if 'flag_sugar_mismatch' in results.columns:
-        sugar_errors = results[results['flag_sugar_mismatch'] == True]
-        if len(sugar_errors) > 0:
-            precision = sugar_errors['true_label'].mean()
-            print(f"Precision for Sugar Mismatches: {precision:.1%} ({len(sugar_errors)} flagged)")
-    
-    if 'flag_negative_values' in results.columns:
-        neg_errors = results[results['flag_negative_values'] == True]
-        if len(neg_errors) > 0:
-            precision = neg_errors['true_label'].mean()
-            print(f"Precision for Negative Values: {precision:.1%} ({len(neg_errors)} flagged)")
+    for flag_col in flag_columns:
+        if flag_col in results.columns:
+            flagged = results[results[flag_col] == True]
+            if len(flagged) > 0:
+                precision = flagged['true_label'].mean()
+                nutrient_name = flag_col.replace('flag_', '').replace('_', ' ').title()
+                print(f"Precision for {nutrient_name}: {precision:.1%} ({len(flagged)} flagged)")
 
 
 def export_false_positives(X_test, y_test, probs, df_original):
-    print("\n--- False Positive Analysis ---")
+    # Exports high-confidence false positives for manual review
+    print("\nFalse Positive Analysis:")
     analysis_df = X_test.copy()
     analysis_df['true_label'] = y_test
     analysis_df['prob'] = probs
     
-    # Find high-confidence false positives - model was confident but human didn't mark as anomaly
+    # Find high-confidence false positives (model confident but not actually an anomaly)
     false_positives = analysis_df[(analysis_df['true_label'] == 0) & (analysis_df['prob'] > 0.7)]
     
     print(f"Found {len(false_positives)} high-confidence false positives (prob > 0.7)")
@@ -92,11 +73,10 @@ def export_false_positives(X_test, y_test, probs, df_original):
 
 
 def evaluate_model():
-    print("=" * 70)
+    # Main evaluation function
     print("MODEL EVALUATION - PRODUCTION METRICS")
-    print("=" * 70)
     
-    # Load embedded parquet data
+    # Load data
     data_path = Path(__file__).parent.parent / "Data" / "PostOpData" / "merged_embedded.parquet"
     df = pd.read_parquet(data_path)
     
@@ -116,28 +96,19 @@ def evaluate_model():
     model = xgb.XGBClassifier()
     model.load_model(str(model_path))
     
-    # Generate predictions and probabilities
+    # Generate predictions
     print("Generating predictions...")
     preds = model.predict(X_test)
     probs = model.predict_proba(X_test)[:, 1]
     
-    # Precision-Recall curve and Recall@K analysis
-    print("\n" + "=" * 70)
-    print("1. PRECISION-RECALL CURVE & RECALL@K")
-    print("=" * 70)
+    # Run all evaluation metrics
+    print("\n1. PRECISION-RECALL CURVE & RECALL@K")
     results_df = plot_and_measure_recall_at_k(y_test, probs, k_values=[500, 1000, 2000, 5000])
     
-    # Precision by nutrient segments
-    print("\n" + "=" * 70)
-    print("2. PRECISION BY NUTRIENT SEGMENTS")
-    print("=" * 70)
+    print("\n2. PRECISION BY NUTRIENT SEGMENTS")
     check_nutrient_segments(X_test, y_test, preds)
     
-    # False positive audit
-    print("\n" + "=" * 70)
-    print("3. FALSE POSITIVE AUDIT")
-    print("=" * 70)
-    
+    print("\n3. FALSE POSITIVE AUDIT")
     merged_path = Path(__file__).parent.parent / "Data" / "PreOpDataCSV" / "merged.csv"
     df_original = None
     if merged_path.exists():
@@ -145,9 +116,7 @@ def evaluate_model():
     
     export_false_positives(X_test, y_test, probs, df_original)
     
-    print("\n" + "=" * 70)
-    print("EVALUATION COMPLETE")
-    print("=" * 70)
+    print("\nEVALUATION COMPLETE")
 
 
 if __name__ == "__main__":
